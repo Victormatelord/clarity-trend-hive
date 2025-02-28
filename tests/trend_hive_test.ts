@@ -33,17 +33,35 @@ Clarinet.test({
     const trend = trendBlock.receipts[0].result.expectSome().expectTuple();
     assertEquals(trend['title'], types.utf8("Summer Neon"));
     assertEquals(trend['votes'], types.uint(0));
+    assertEquals(trend['active'], types.bool(true));
   },
 });
 
 Clarinet.test({
-  name: "Test upvoting trend",
+  name: "Test empty input validation",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const wallet1 = accounts.get('wallet_1')!;
-    const wallet2 = accounts.get('wallet_2')!;
     
-    // First post a trend
-    let postBlock = chain.mineBlock([
+    let block = chain.mineBlock([
+      Tx.contractCall('trend_hive', 'post-trend', [
+        types.utf8(""),
+        types.utf8("Description"),
+        types.utf8("https://example.com/test.jpg"),
+        types.utf8("Test Category")
+      ], wallet1.address)
+    ]);
+    
+    block.receipts[0].result.expectErr(types.uint(105));
+  },
+});
+
+Clarinet.test({
+  name: "Test creator cannot vote on own trend",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const wallet1 = accounts.get('wallet_1')!;
+    
+    // Post trend
+    chain.mineBlock([
       Tx.contractCall('trend_hive', 'post-trend', [
         types.utf8("Test Trend"),
         types.utf8("Description"),
@@ -52,30 +70,21 @@ Clarinet.test({
       ], wallet1.address)
     ]);
     
-    // Then upvote it
-    let upvoteBlock = chain.mineBlock([
+    // Try to vote on own trend
+    let voteBlock = chain.mineBlock([
       Tx.contractCall('trend_hive', 'upvote-trend', [
-        types.uint(0)
-      ], wallet2.address)
-    ]);
-    
-    upvoteBlock.receipts[0].result.expectOk().expectBool(true);
-    
-    // Verify vote count increased
-    let trendBlock = chain.mineBlock([
-      Tx.contractCall('trend_hive', 'get-trend', [
         types.uint(0)
       ], wallet1.address)
     ]);
     
-    const trend = trendBlock.receipts[0].result.expectSome().expectTuple();
-    assertEquals(trend['votes'], types.uint(1));
+    voteBlock.receipts[0].result.expectErr(types.uint(104));
   },
 });
 
 Clarinet.test({
-  name: "Test double voting prevention",
+  name: "Test trend moderation",
   async fn(chain: Chain, accounts: Map<string, Account>) {
+    const deployer = accounts.get('deployer')!;
     const wallet1 = accounts.get('wallet_1')!;
     const wallet2 = accounts.get('wallet_2')!;
     
@@ -89,21 +98,23 @@ Clarinet.test({
       ], wallet1.address)
     ]);
     
-    // Vote once
-    let vote1Block = chain.mineBlock([
+    // Moderate trend (deactivate)
+    let moderateBlock = chain.mineBlock([
+      Tx.contractCall('trend_hive', 'moderate-trend', [
+        types.uint(0),
+        types.bool(false)
+      ], deployer.address)
+    ]);
+    
+    moderateBlock.receipts[0].result.expectOk().expectBool(true);
+    
+    // Try to vote on deactivated trend
+    let voteBlock = chain.mineBlock([
       Tx.contractCall('trend_hive', 'upvote-trend', [
         types.uint(0)
       ], wallet2.address)
     ]);
     
-    // Try to vote again
-    let vote2Block = chain.mineBlock([
-      Tx.contractCall('trend_hive', 'upvote-trend', [
-        types.uint(0)
-      ], wallet2.address)
-    ]);
-    
-    vote1Block.receipts[0].result.expectOk();
-    vote2Block.receipts[0].result.expectErr(types.uint(102)); // err-already-voted
+    voteBlock.receipts[0].result.expectErr(types.uint(103));
   },
 });
